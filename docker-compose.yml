@@ -1,0 +1,83 @@
+# docker compose up --build                       -> whole system, UI at http://localhost:8000
+# docker compose up --build --scale worker=3      -> three agent-worker containers (A7)
+# Load test with the stub model: LLM_PROVIDER=openai_compat LLM_BASE_URL=http://llm-stub:9000/v1 docker compose up --build --scale worker=3
+x-app: &app
+  build: .
+  env_file: [{path: .env, required: false}]
+  environment: &env
+    QUEUE_BACKEND: redis
+    REDIS_URL: redis://redis:6379/0
+    VERIFIER_URL: http://verifier:8100
+    INDEX_DIR: /srv/data/index
+    QUARANTINE_FILE: /srv/data/quarantine.jsonl
+    OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4318}
+    LLM_PROVIDER: ${LLM_PROVIDER:-offline}
+    LLM_BASE_URL: ${LLM_BASE_URL:-}
+    LLM_API_KEY: ${LLM_API_KEY:-}
+    LLM_MODEL: ${LLM_MODEL:-}
+    DEMO_MODE: ${DEMO_MODE:-1}
+    RATE_LIMIT_PER_MIN: ${RATE_LIMIT_PER_MIN:-30}
+    CACHE_RUNS: ${CACHE_RUNS:-1}
+  volumes: [data:/srv/data]
+
+services:
+  ingest:            # D2: one-shot, idempotent corpus pipeline (parse -> chunk -> embed -> index)
+    <<: *app
+    command: ["python", "-m", "app.corpus"]
+    restart: "no"
+
+  redis:             # queue + run store + cache (independent failure domain, stateful)
+    image: redis:7-alpine
+    healthcheck: {test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 10}
+
+  verifier:          # Verifier/Router agent: own process, own failure domain, releasable independently
+    <<: *app
+    environment: {<<: *env, SERVICE_NAME: verifier}
+    command: ["python", "-m", "uvicorn", "app.verifier_service:app", "--host", "0.0.0.0", "--port", "8100"]
+    healthcheck: {test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8100/health')"], interval: 5s, timeout: 3s, retries: 10}
+
+  llm-stub:          # D6: fixed response after a realistic delay; used instead of a real provider for load tests
+    <<: *app
+    environment: {<<: *env, STUB_DELAY_MS: "${STUB_DELAY_MS:-800}"}
+    command: ["python", "-m", "uvicorn", "app.llm_stub:app", "--host", "0.0.0.0", "--port", "9000"]
+    healthcheck: {test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:9000/health')"], interval: 5s, timeout: 3s, retries: 10}
+
+  api:               # FastAPI: validation, rate limit, cache, enqueue, status, UI. Stateless; no agent work here.
+    <<: *app
+    environment: {<<: *env, SERVICE_NAME: api}
+    ports: ["8000:8000"]
+    depends_on:
+      ingest: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      verifier: {condition: service_healthy}
+    healthcheck: {test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/ready')"], interval: 5s, timeout: 3s, retries: 20}
+
+  worker:            # agent workers: CPU/IO profile differs from the API, scaled independently:  --scale worker=3
+    <<: *app
+    environment: {<<: *env, SERVICE_NAME: worker, WORKER_THREADS: "${WORKER_THREADS:-8}"}
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      ingest: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      verifier: {condition: service_healthy}
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    environment: {COLLECTOR_OTLP_ENABLED: "true"}
+    ports: ["16686:16686"]
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes: ["./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+    depends_on: [api]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    environment: {GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD:-admin}", GF_AUTH_ANONYMOUS_ENABLED: "true"}
+    volumes: ["./deploy/grafana/provisioning:/etc/grafana/provisioning:ro", "./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro"]
+    ports: ["3000:3000"]
+    depends_on: [prometheus]
+
+volumes:
+  data:

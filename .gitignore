@@ -1,0 +1,9 @@
+# local config and secrets
+.env
+# generated at runtime (index, quarantine, run store)
+data/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/

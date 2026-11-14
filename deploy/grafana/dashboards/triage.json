@@ -1,0 +1,384 @@
+{
+ "title": "Incident Triage - service dashboard",
+ "uid": "triage",
+ "schemaVersion": 39,
+ "refresh": "5s",
+ "time": {
+  "from": "now-15m",
+  "to": "now"
+ },
+ "panels": [
+  {
+   "id": 1,
+   "title": "Run latency p50 / p95 (submit\u2192result)",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "histogram_quantile(0.5,sum(rate(triage_run_seconds_bucket[1m])) by (le))",
+     "legendFormat": "p50",
+     "refId": "A"
+    },
+    {
+     "expr": "histogram_quantile(0.95,sum(rate(triage_run_seconds_bucket[1m])) by (le))",
+     "legendFormat": "p95",
+     "refId": "B"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 2,
+   "title": "Throughput (runs/s) by outcome",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 8,
+    "y": 0,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(triage_runs_total[1m])) by (status)",
+     "legendFormat": "{{status}}",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "ops"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 3,
+   "title": "Error rate (failed runs / all)",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 16,
+    "y": 0,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(triage_runs_total{status=\"failed\"}[1m]))/clamp_min(sum(rate(triage_runs_total[1m])),1e-9)",
+     "legendFormat": "failed ratio",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 4,
+   "title": "Availability (targets up)",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 0,
+    "y": 7,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "avg(up)",
+     "legendFormat": "up",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percentunit"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 5,
+   "title": "Per-step latency p95",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 8,
+    "y": 7,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "histogram_quantile(0.95,sum(rate(triage_step_seconds_bucket[1m])) by (le,step))",
+     "legendFormat": "{{step}}",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 6,
+   "title": "Tool calls & steps per run (avg)",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 16,
+    "y": 7,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(triage_tool_calls_per_run_sum[5m]))/clamp_min(sum(rate(triage_tool_calls_per_run_count[5m])),1e-9)",
+     "legendFormat": "tool calls",
+     "refId": "A"
+    },
+    {
+     "expr": "sum(rate(triage_steps_per_run_sum[5m]))/clamp_min(sum(rate(triage_steps_per_run_count[5m])),1e-9)",
+     "legendFormat": "steps",
+     "refId": "B"
+    }
+   ]
+  },
+  {
+   "id": 7,
+   "title": "Retry rate (LLM) & breaker",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 0,
+    "y": 14,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "rate(triage_llm_retries_total[1m])",
+     "legendFormat": "retries/s",
+     "refId": "A"
+    },
+    {
+     "expr": "max(triage_breaker_open)",
+     "legendFormat": "breaker open",
+     "refId": "B"
+    }
+   ]
+  },
+  {
+   "id": 8,
+   "title": "Verification outcomes",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 8,
+    "y": 14,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(triage_verification_total[1m])) by (outcome)",
+     "legendFormat": "{{outcome}}",
+     "refId": "A"
+    }
+   ]
+  },
+  {
+   "id": 9,
+   "title": "Cost USD per step (rate)",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 16,
+    "y": 14,
+    "w": 8,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(triage_cost_usd_total[5m])) by (step)",
+     "legendFormat": "{{step}}",
+     "refId": "A"
+    },
+    {
+     "expr": "sum(rate(triage_degraded_runs_total[5m]))",
+     "legendFormat": "degraded runs/s",
+     "refId": "B"
+    }
+   ]
+  },
+  {
+   "id": 10,
+   "title": "Container CPU (process) / uptime",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 0,
+    "y": 21,
+    "w": 12,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "rate(process_cpu_seconds_total[1m])",
+     "legendFormat": "{{job}} {{instance}} cpu",
+     "refId": "A"
+    },
+    {
+     "expr": "triage_uptime_seconds",
+     "legendFormat": "{{job}} {{instance}} uptime s",
+     "refId": "B"
+    }
+   ]
+  },
+  {
+   "id": 11,
+   "title": "Resident memory per container",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 12,
+    "y": 21,
+    "w": 12,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "process_resident_memory_bytes",
+     "legendFormat": "{{job}} {{instance}}",
+     "refId": "A"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes"
+    },
+    "overrides": []
+   }
+  },
+  {
+   "id": 12,
+   "title": "Index freshness / size",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 0,
+    "y": 28,
+    "w": 12,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "time()-triage_index_built_timestamp",
+     "legendFormat": "index age s",
+     "refId": "A"
+    },
+    {
+     "expr": "triage_index_chunks",
+     "legendFormat": "chunks",
+     "refId": "B"
+    },
+    {
+     "expr": "triage_index_chunks_per_second",
+     "legendFormat": "build chunks/s",
+     "refId": "C"
+    }
+   ]
+  },
+  {
+   "id": 13,
+   "title": "Guardrails, cache, rate limit, quarantine",
+   "type": "timeseries",
+   "gridPos": {
+    "x": 12,
+    "y": 28,
+    "w": 12,
+    "h": 7
+   },
+   "datasource": {
+    "type": "prometheus",
+    "uid": null
+   },
+   "targets": [
+    {
+     "expr": "sum(rate(triage_guardrail_total[5m])) by (kind)",
+     "legendFormat": "guard {{kind}}",
+     "refId": "A"
+    },
+    {
+     "expr": "sum(rate(triage_cache_total[5m])) by (layer,result)",
+     "legendFormat": "cache {{layer}} {{result}}",
+     "refId": "B"
+    },
+    {
+     "expr": "rate(triage_rate_limited_total[5m])",
+     "legendFormat": "429/s",
+     "refId": "C"
+    },
+    {
+     "expr": "rate(triage_quarantined_total[5m])",
+     "legendFormat": "quarantined/s",
+     "refId": "D"
+    }
+   ]
+  }
+ ]
+}

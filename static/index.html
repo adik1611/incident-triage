@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Incident Triage Assistant</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1b2430;--mute:#64707f;--line:#e2e6ec;--accent:#2457d6;--ok:#157f4b;--warn:#b26a00;--bad:#c0262d}
+@media(prefers-color-scheme:dark){:root{--bg:#12161c;--card:#1b212a;--ink:#e8edf3;--mute:#93a0b0;--line:#2b3441;--accent:#6e9bff;--ok:#4fcf90;--warn:#f0b050;--bad:#ff7a80}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif}
+header{padding:14px 20px;border-bottom:1px solid var(--line);background:var(--card);display:flex;gap:16px;align-items:baseline;flex-wrap:wrap}
+h1{font-size:18px;margin:0}header small{color:var(--mute)}
+main{max-width:1180px;margin:0 auto;padding:16px;display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:16px}
+@media(max-width:860px){main{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:14px}
+h2{font-size:14px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute);margin:0 0 10px}
+select,textarea,button{font:inherit;color:inherit}
+select,textarea{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+textarea{height:260px;font:12.5px/1.45 ui-monospace,Menlo,Consolas,monospace}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:8px 14px;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}button:disabled{opacity:.5}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.pill{display:inline-block;padding:2px 10px;border-radius:99px;font-size:12px;font-weight:600;border:1px solid var(--line)}
+.sev1{color:var(--bad);border-color:var(--bad)}.sev2{color:var(--warn);border-color:var(--warn)}.sev3{color:var(--ok);border-color:var(--ok)}
+.esc{border-left:4px solid var(--warn);padding-left:10px}.okb{border-left:4px solid var(--ok);padding-left:10px}.badb{border-left:4px solid var(--bad);padding-left:10px}
+ol{padding-left:20px;margin:6px 0}li{margin:4px 0}code,.mono{font:12.5px ui-monospace,Menlo,Consolas,monospace}
+.cite{border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;background:var(--bg)}.cite b{color:var(--accent)}
+.mute{color:var(--mute)}table{border-collapse:collapse;width:100%;font-size:12.5px}td,th{border-bottom:1px solid var(--line);padding:4px 6px;text-align:left;vertical-align:top}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}.kv div{background:var(--bg);border-radius:8px;padding:8px}.kv b{display:block;font-size:18px}
+</style></head><body>
+<header><h1>Incident Triage &amp; Runbook Assistant</h1><small>PostgreSQL 16 · proposes only, never executes · on-call decides</small></header>
+<main>
+<div>
+ <div class="card"><h2>1 · Submit alert</h2>
+  <select id="ex"></select>
+  <textarea id="payload" spellcheck="false"></textarea>
+  <div class="row"><button id="go">Submit &amp; triage</button><button class="ghost" id="dup">Submit 10× (rate-limit test)</button></div>
+  <div id="subinfo" class="mute" style="margin-top:8px"></div></div>
+ <div class="card"><h2>Demo controls</h2>
+  <div class="row"><button class="ghost" id="llmdown">Take model provider DOWN</button><button class="ghost" id="llmup">Restore provider</button></div>
+  <div class="row"><label class="mute"><input type="checkbox" id="unsup"> inject an unsupported claim (verifier must catch it)</label></div>
+  <div id="ctl" class="mute"></div></div>
+ <div class="card"><h2>Service stats</h2><div id="stats" class="kv"></div><div class="mute" id="idx" style="margin-top:8px"></div>
+  <p class="mute" style="margin:8px 0 0">Prometheus metrics at <a href="/metrics">/metrics</a> · API docs <a href="/docs">/docs</a> · contract <a href="/v1/contract">/v1/contract</a> · <a href="/v1/quarantine">quarantine</a></p></div>
+</div>
+<div>
+ <div class="card" id="out"><h2>2 · Result</h2><div class="mute">Submit an alert to see the recommendation.</div></div>
+ <div class="card" id="tr" style="display:none"><h2>3 · Run trace (every tool call, query, passage, latency, cost)</h2><div id="trbody"></div></div>
+</div></main>
+<script>
+const $=id=>document.getElementById(id);let EX=[];
+const esc=s=>String(s??"").replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function fill(o){const c=JSON.parse(JSON.stringify(o));if(c.fired_at==="__NOW__")c.fired_at=new Date().toISOString();return c}
+async function init(){EX=await (await fetch("/v1/examples")).json();$("ex").innerHTML=EX.map((e,i)=>`<option value="${i}">${esc(e.name)}</option>`).join("");pick();stats();setInterval(stats,5000)}
+function pick(){let r=fill(EX[$("ex").value].request);$("payload").value=JSON.stringify(r,null,2)}
+$("ex").onchange=pick;
+async function stats(){try{const s=await (await fetch("/v1/stats")).json();
+ $("stats").innerHTML=[["Runs",s.runs],["Success",s.task_success_rate??"–"],["Escalated",s.escalated],["p50 s",s.p50_s??"–"],["p95 s",s.p95_s??"–"],["Avg tools",s.avg_tool_calls??"–"],["$/100 runs",s.cost_per_100_runs_usd],["Breaker",s.breaker],["Queue",s.queue_depth]].map(([k,v])=>`<div>${k}<b>${v}</b></div>`).join("");
+ const m=s.index||{};$("idx").textContent=`Index: ${m.chunks} chunks, PG ${(m.pg_versions||[]).join(",")}, built ${m.built_at_iso}, ${m.chunks_per_s} chunks/s, ${m.vector_backend}`}catch(e){}}
+async function submit(){let body;try{body=JSON.parse($("payload").value)}catch(e){$("subinfo").textContent="Not valid JSON: "+e.message;return}
+ if($("unsup").checked){body.labels=Object.assign({},body.labels,{demo_fault:"unsupported_citation"})}
+ $("go").disabled=true;$("subinfo").textContent="Submitting…";$("tr").style.display="none";
+ const t0=performance.now();const r=await fetch("/v1/runs",{method:"POST",headers:{"Content-Type":"application/json","X-Client-Id":"web-ui"},body:JSON.stringify(body)});const j=await r.json();
+ if(r.status===422){$("subinfo").textContent="";$("out").innerHTML=`<h2>2 · Result</h2><div class="badb"><b>Rejected at the ingestion boundary and quarantined.</b><br>No agent run was started (agent_run_started = ${j.agent_run_started}).<table><tr><th>field</th><th>error</th></tr>${j.errors.map(e=>`<tr><td class="mono">${esc(e.field)}</td><td>${esc(e.error)}</td></tr>`).join("")}</table><div class="mute">correlation id ${esc(j.correlation_id)}</div></div>`;$("go").disabled=false;stats();return}
+ if(r.status===429){$("subinfo").textContent="Rate limited (429): one client may not loop against a multi-step agent.";$("go").disabled=false;return}
+ $("subinfo").textContent=`Accepted ${j.run_id} (HTTP 202 in ${(performance.now()-t0).toFixed(0)} ms${j.cached?", served from cache":""}). Polling…`;
+ let run;for(let i=0;i<120;i++){run=await (await fetch(j.status_url)).json();if(["succeeded","escalated","failed"].includes(run.status))break;$("out").innerHTML=`<h2>2 · Result</h2><div class="mute">Status: ${esc(run.status)}…</div>`;await new Promise(r=>setTimeout(r,500))}
+ $("subinfo").textContent=`Run ${run.run_id} finished in ${run.latency_s}s (${run.status}).`;render(run);$("go").disabled=false;stats();loadTrace(run.run_id)}
+function render(run){const r=run.result||{};const sev=(r.severity||"").toLowerCase();
+ let h=`<h2>2 · Result</h2><div class="row" style="margin:0 0 8px"><span class="pill ${sev}">${esc(r.severity||"–")}</span><span class="pill">route: ${esc(r.route||"–")}</span>${r.degraded?'<span class="pill sev2">degraded (model unavailable → extractive)</span>':""}${(r.guardrails||[]).map(g=>`<span class="pill sev2">guardrail: ${esc(g)}</span>`).join("")}<span class="pill">prompt ${esc(run.prompt_version)}</span></div><div class="mute">Basis: ${esc(r.basis)}</div>`;
+ if(r.status==="failed"){h+=`<div class="badb" style="margin-top:10px"><b>Run did not complete – no answer returned.</b> ${esc(r.error)}</div>`}
+ else if(r.escalation&&r.escalation.required){h+=`<div class="esc" style="margin-top:10px"><b>Escalated to a human – the system declined to answer.</b><br>${esc(r.escalation.reason)}${(r.alternatives||[]).length?`<div class="mute">Candidates considered: ${r.alternatives.map(a=>esc(a.id+" ("+a.cause_class+") "+(a.support??""))).join(" · ")}</div>`:""}</div>`}
+ else{h+=`<div class="okb" style="margin-top:10px"><b>Proposed cause class: ${esc(r.proposed_cause_class)}</b> — ${esc(r.hypothesis)}<p>${esc(r.summary)}</p></div>
+  <h2 style="margin-top:12px">Proposed first-response steps (on-call decides)</h2><ol>${r.steps.map(s=>`<li>${esc(s.text)} <span class="mute mono">[${s.cite.join(", ")}]</span></li>`).join("")}</ol>
+  <h2>Citations (resolved to retrieved text)</h2>${r.citations.map(c=>`<div class="cite"><b>${esc(c.id)}</b> · ${esc(c.title.slice(0,90))} <span class="mute">(${esc(c.kind)}, PG ${c.version})</span><div class="mute">“${esc(c.quote)}…”</div></div>`).join("")}`}
+ const v=r.verification||{};h+=`<h2 style="margin-top:12px">Verification</h2><div class="mute">${v.ok?"PASSED":"did not pass"} after ${v.attempts||1} attempt(s) · scores ${esc(JSON.stringify(v.scores||{}))} ${(v.failures||[]).length?"· failures: "+esc(JSON.stringify(v.failures)):""}</div>
+ <div class="mute">Usage: ${r.usage?`${r.usage.prompt_tokens}+${r.usage.completion_tokens} tokens, $${r.usage.cost_usd}`:"–"} · steps ${r.steps_taken??"–"} · tool calls ${r.tool_calls??"–"} · mode ${esc(r.agent_mode)}</div>
+ <div class="row"><button class="ghost" onclick="fb('${run.run_id}',true)">👍 satisfactory</button><button class="ghost" onclick="fb('${run.run_id}',false)">👎 not satisfactory</button><span id="fbmsg" class="mute"></span></div>
+ <div class="mute" style="margin-top:6px">${esc(r.safety_note||"")}</div>`;$("out").innerHTML=h}
+async function fb(id,ok){let reason=ok?"":prompt("What was wrong?")||"";await fetch(`/v1/runs/${id}/feedback`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({satisfactory:ok,reason})});$("fbmsg").textContent="Feedback recorded."}
+async function loadTrace(id){const t=await (await fetch(`/v1/runs/${id}/trace`)).json();$("tr").style.display="block";
+ $("trbody").innerHTML=`<table><tr><th>#</th><th>agent</th><th>step</th><th>detail</th><th>ms</th><th>tokens / cost</th></tr>${(t.trace||[]).map(s=>`<tr><td>${s.n}</td><td>${esc(s.agent)}</td><td>${esc(s.type)}: <b>${esc(s.name)}</b>${s.error?` <span style="color:var(--bad)">${esc(s.error)}</span>`:""}</td><td class="mono">${esc(s.query||(s.input&&JSON.stringify(s.input).slice(0,140))||"")}${s.why?`<div class="mute">why: ${esc(s.why)}</div>`:""}${s.passages?`<div>passages: ${s.passages.map(p=>esc(p.id)+(p.score!=null?" ("+p.score+")":"")).join(", ")}</div>`:""}${s.output?`<div>${esc(JSON.stringify(s.output).slice(0,260))}</div>`:""}${s.prompt_version?`<div>prompt ${esc(s.prompt_version)}</div>`:""}${s.name==="verifier_agent"?`<div>verifier ok=${s.ok} ${s.failures&&s.failures.length?esc(JSON.stringify(s.failures)):""}</div>`:""}</td><td>${s.latency_ms}</td><td>${s.prompt_tokens!=null?`${s.prompt_tokens}+${s.completion_tokens} / $${(s.cost_usd||0).toFixed(5)}`:""}</td></tr>`).join("")}</table><div class="mute">run ${esc(t.run_id)} · correlation ${esc(t.correlation_id)}</div>`}
+$("go").onclick=submit;
+$("dup").onclick=async()=>{let ok=0,lim=0;const b=$("payload").value;for(let i=0;i<10;i++){const r=await fetch("/v1/runs",{method:"POST",headers:{"Content-Type":"application/json","X-Client-Id":"loop-test"},body:b});r.status===429?lim++:ok++}$("subinfo").textContent=`10 rapid submissions: ${ok} accepted, ${lim} rate-limited. (Limit is configurable: RATE_LIMIT_PER_MIN)`;stats()};
+$("llmdown").onclick=async()=>{const r=await fetch("/admin/fault/llm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({down:true})});$("ctl").textContent="Provider DOWN: "+JSON.stringify(await r.json())+" — submit a (new) alert; wait for 3 failures to open the breaker."};
+$("llmup").onclick=async()=>{const r=await fetch("/admin/fault/llm",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({down:false})});$("ctl").textContent="Provider restored: "+JSON.stringify(await r.json())};
+init();
+</script></body></html>
